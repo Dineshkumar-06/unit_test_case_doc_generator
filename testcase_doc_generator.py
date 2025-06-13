@@ -444,6 +444,10 @@ def run_processing():
     radio_var.set("N")
     dynamic_frame.pack_forget()
 
+    for var in additional_docs:
+        var.set("")
+    additional_docs.clear()
+
 # Main frame
 app = tk.Tk()
 app.title("Unit Testcase Document Generator")

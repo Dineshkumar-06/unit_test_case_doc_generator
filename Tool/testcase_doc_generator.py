@@ -7,7 +7,11 @@ from openpyxl.cell.cell import MergedCell
 import os
 
 import copy
-from openpyxl.cell.cell import Cell  # Import Cell class to check type
+from openpyxl.cell.cell import Cell  
+
+import copy
+import openpyxl
+from openpyxl.styles import PatternFill
 
 
 def is_row_empty(row):
@@ -15,10 +19,10 @@ def is_row_empty(row):
 
 def get_last_data_column(sheet):
     max_col = 1
-    for row in sheet.iter_rows():
-        for i, cell in enumerate(row):
-            if cell.value:
-                max_col = max(max_col, i + 1)
+    for row in sheet.iter_rows(min_row=1, max_row=10):  # Check only top 10 rows
+        for i, cell in enumerate(row, 1):
+            if cell.value not in (None, ""):
+                max_col = max(max_col, i)
     return max_col
 
 def get_last_data_row(sheet):
@@ -35,20 +39,36 @@ def add_testcase_columns(sheet):
     fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
     align = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
+    column_widths = {
+        "EXPECTED OUTPUT": 20,
+        "DEFECT SEVERITY": 18,
+        "REMARKS": 25
+    }
+
     for i, header in enumerate(headers):
         col_idx = last_col + i + 1
         col_letter = get_column_letter(col_idx)
+
+        # Unmerge if necessary before assigning new headers
+        for rng in sheet.merged_cells.ranges:
+            if f"{col_letter}1" in str(rng):
+                sheet.unmerge_cells(str(rng))
+                break
+
         sheet[f"{col_letter}1"] = header
         sheet[f"{col_letter}1"].alignment = align
 
+        sheet.column_dimensions[col_letter].width = column_widths.get(header, 15)
+
         if header == "EXPECTED OUTPUT":
             for row in range(2, last_row + 1):
-                if all(sheet.cell(row=row, column=col).value in [None, ""] for col in range(1, 5)):
+                if all(sheet.cell(row=row, column=col).value in [None, ""] for col in range(1, last_col + 1)):
                     continue
                 cell = sheet[f"{col_letter}{row}"]
                 cell.value = "Pass"
                 cell.fill = fill
                 cell.alignment = align
+
 
 def delete_static_sheets(wb):
     for name in ["ReadMe", "Title"]:
@@ -72,7 +92,9 @@ def insert_static_sheets(wb_target, static_sheet_file, flag):
                 if not isinstance(cell, Cell):
                     continue  # Skip MergedCell or other non-standard cells
 
-                new_cell = new_sheet.cell(row=cell.row, column=cell.column, value=cell.value)
+                new_cell = new_sheet.cell(row=cell.row, column=cell.column)
+                if not isinstance(new_cell, MergedCell):
+                    new_cell.value = cell.value
 
                 if cell.has_style:
                     if cell.font:
@@ -123,10 +145,6 @@ def add_testcase_columns_func(sheet, start_row, end_row, start_col):
         sheet.cell(row=row, column=EXPECTED_OUTPUT_COL, value="Pass").fill = green_fill
 
 def append_age_workbook_to_single_sheet(wb_target, age_file_path, add_testcase_columns_func):
-    import copy
-    import openpyxl
-    from openpyxl.styles import PatternFill
-
     age_wb = openpyxl.load_workbook(age_file_path)
     combined_sheet = wb_target.create_sheet("Age")
 
@@ -158,11 +176,9 @@ def append_age_workbook_to_single_sheet(wb_target, age_file_path, add_testcase_c
                 if in_merged:
                     continue  # Skip writing to merged region inner cells
 
-                target_cell = combined_sheet.cell(
-                    row=target_row,
-                    column=target_col,
-                    value=cell.value
-                )
+                target_cell = combined_sheet.cell(row=target_row, column=target_col)
+                if not isinstance(target_cell, MergedCell):
+                    target_cell.value = cell.value
 
                 if cell.has_style:
                     target_cell.font = copy.copy(cell.font)
@@ -203,11 +219,7 @@ def append_age_workbook_to_single_sheet(wb_target, age_file_path, add_testcase_c
                 row_values.append(value)
 
         if "general" in row_values or "open" in row_values:
-            # Determine where "relaxation years" is in the row
-            try:
-                start_col = row_values.index("relaxation years") + 2  # next column
-            except ValueError:
-                start_col = sheet.max_column + 1
+            start_col = sheet.max_column + 1
 
             start_row = row + 1
             end_row = start_row
@@ -225,17 +237,23 @@ def append_age_workbook_to_single_sheet(wb_target, age_file_path, add_testcase_c
 
 def append_testcase_other_details(sheet):
     last_col = get_last_data_column(sheet)
-    # last_row = get_last_data_row(sheet)
     
     headers = ["EXPECTED OUTPUT", "DEFECT SEVERITY", "REMARKS"]
     fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
     align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    column_widths = {
+        "EXPECTED OUTPUT": 20,
+        "DEFECT SEVERITY": 18,
+        "REMARKS": 25
+    }
 
     for i, header in enumerate(headers):
         col_idx = last_col + i + 1
         col_letter = get_column_letter(col_idx)
         sheet[f"{col_letter}1"] = header
         sheet[f"{col_letter}1"].alignment = align
+        sheet.column_dimensions[col_letter].width = column_widths.get(header, 15)
 
         if header == "EXPECTED OUTPUT":
             row = 2
@@ -244,11 +262,7 @@ def append_testcase_other_details(sheet):
             cell.fill = fill
             cell.alignment = align
 
-    headers = ["EXPECTED OUTPUT", "DEFECT SEVERITY", "REMARKS"]
-    fill = PatternFill(start_color="A6E22E", end_color="A6E22E", fill_type="solid")
-    align = Alignment(horizontal="center", vertical="center", wrap_text=True)
-
-def process_excel(input_path, static_sheet_file, age_sheet_file, eligible_sheet_file):
+def process_excel(input_path, static_sheet_file, age_sheet_file, eligible_sheet_file, additional_docs):
     wb = openpyxl.load_workbook(input_path)
 
     delete_static_sheets(wb)
@@ -256,6 +270,13 @@ def process_excel(input_path, static_sheet_file, age_sheet_file, eligible_sheet_
 
     append_age_workbook_to_single_sheet(wb, age_sheet_file, add_testcase_columns_func)
     insert_static_sheets(wb, eligible_sheet_file, 1)
+
+    if additional_docs != []:
+        for i in additional_docs:
+            try:
+                insert_static_sheets(wb, i, 1)
+            except Exception as e:
+                messagebox.showerror("Error", f"Error inserting dynamic file '{i}':\n{str(e)}")
 
     for sheet in wb.worksheets:
         if sheet.title not in ["ReadMe", "Title","Age", "Other Details"]:
@@ -269,6 +290,7 @@ def process_excel(input_path, static_sheet_file, age_sheet_file, eligible_sheet_
     return output_path
 
 # ---- Tkinter GUI ----
+
 def browse_input():
     filepath = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx")])
     if filepath:
@@ -289,12 +311,61 @@ def browse_eligible():
     if filepath:
         eligible_path.set(filepath)
 
+# ----------------------------------------------------------------------------------------------
+
+# Functions related to dynamic fields 
+
+def update_fields():
+    selected = radio_var.get()
+
+    # Hide all dynamic widgets first
+    for widget in dynamic_frame.winfo_children():
+        widget.pack_forget()
+
+    if selected == "Y":
+        button_frame.pack(pady=5)
+        dynamic_frame.pack(pady=10)
+        
+    elif selected == "N":
+        dynamic_frame.pack_forget()
+        
+
+def add_fields():
+    var = tk.StringVar()
+
+    field_frame = tk.Frame(dynamic_frame)
+    field_frame.pack(pady=5, fill='x')
+
+    def browse():
+        filepath = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx")])
+        if filepath:
+            var.set(filepath)
+
+    tk.Label(field_frame, text="Additional File:").pack(pady=5)
+    tk.Entry(field_frame,textvariable=var, width=50).pack()
+    tk.Button(field_frame, text="Browse", command=browse).pack(pady=5)
+
+    dynamic_field_frames.append(field_frame)
+    additional_docs.append(var)
+
+def remove_fields():
+    if dynamic_field_frames:
+        last_frame = dynamic_field_frames.pop() # Get the last added frame
+        additional_docs.pop() 
+        last_frame.destroy() 
+        scrollable_frame.update_idletasks()
+
+# ----------------------------------------------------------------------------------------------
+
+# Main function to start the processing
 def run_processing():
+    dynamic_docs = [var.get() for var in additional_docs]
+
     if not input_path.get() or not static_path.get() or not age_path.get() or not eligible_path.get():
         messagebox.showerror("Missing Input", "Please select all the files.")
         return
     try:
-        output = process_excel(input_path.get(), static_path.get(), age_path.get(), eligible_path.get())
+        output = process_excel(input_path.get(), static_path.get(), age_path.get(), eligible_path.get(), dynamic_docs)
         messagebox.showinfo("Success", f"Test Case Document generated successfully!\n\nTest Case Document created at:\n{output}")
         
     except Exception as e:
@@ -305,7 +376,14 @@ def run_processing():
     static_path.set("")
     age_path.set("")
     eligible_path.set("")
+    radio_var.set("N")
+    dynamic_frame.pack_forget()
 
+    for var in additional_docs:
+        var.set("")
+    additional_docs.clear()
+
+# Main frame
 app = tk.Tk()
 app.title("Unit Testcase Document Generator")
 app.geometry("1000x1000")
@@ -314,23 +392,61 @@ input_path = tk.StringVar()
 static_path = tk.StringVar()
 age_path = tk.StringVar()
 eligible_path = tk.StringVar()
+radio_var = tk.StringVar(value="N")
 
-tk.Label(app, text="Input SOW Excel File (SOW.xlsx)").pack(pady=5)
-tk.Entry(app, textvariable=input_path, width=50).pack()
-tk.Button(app, text="Browse", command=browse_input).pack(pady=5)
+dynamic_field_frames = []
+additional_docs = []
 
-tk.Label(app, text="Static Sheets File (static_sheets.xlsx)").pack(pady=5)
-tk.Entry(app, textvariable=static_path, width=50).pack()
-tk.Button(app, text="Browse", command=browse_static).pack(pady=5)
+canvas = tk.Canvas(app)
+scrollbar = tk.Scrollbar(app, orient="vertical", command=canvas.yview)
+scrollable_frame = tk.Frame(canvas)
 
-tk.Label(app, text="Age Sheet (age.xlsx)").pack(pady=5)
-tk.Entry(app, textvariable=age_path, width=50).pack()
-tk.Button(app, text="Browse", command=browse_age).pack(pady=5)
+scrollable_frame.bind(
+    "<Configure>",
+    lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+)
 
-tk.Label(app, text="Eligibility Sheet (eligibility.xlsx)").pack(pady=5)
-tk.Entry(app, textvariable=eligible_path, width=50).pack()
-tk.Button(app, text="Browse", command=browse_eligible).pack(pady=5)
+canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+canvas.configure(yscrollcommand=scrollbar.set)
 
-tk.Button(app, text="Generate Test Case Document", command=run_processing, bg="green", fg="white").pack(pady=20)
+canvas.pack(side="left", fill="both", expand=True)
+scrollbar.pack(side="right", fill="y")
+
+tk.Label(scrollable_frame, text="Input SOW Excel File (SOW.xlsx)").pack(pady=5)
+tk.Entry(scrollable_frame, textvariable=input_path, width=50).pack()
+tk.Button(scrollable_frame, text="Browse", command=browse_input).pack(pady=5)
+
+tk.Label(scrollable_frame, text="Static Sheets File (static_sheets.xlsx)").pack(pady=5)
+tk.Entry(scrollable_frame, textvariable=static_path, width=50).pack()
+tk.Button(scrollable_frame, text="Browse", command=browse_static).pack(pady=5)
+
+tk.Label(scrollable_frame, text="Age Sheet (age.xlsx)").pack(pady=5)
+tk.Entry(scrollable_frame, textvariable=age_path, width=50).pack()
+tk.Button(scrollable_frame, text="Browse", command=browse_age).pack(pady=5)
+
+tk.Label(scrollable_frame, text="Eligibility Sheet (eligibility.xlsx)").pack(pady=5)
+tk.Entry(scrollable_frame, textvariable=eligible_path, width=50).pack()
+tk.Button(scrollable_frame, text="Browse", command=browse_eligible).pack(pady=5)
+
+# Frame to hold radio button field
+radio_frame = tk.Frame(scrollable_frame)
+radio_frame.pack(padx=350, pady=15, anchor="w") 
+
+tk.Label(radio_frame, text="Is there any additional files?").pack(side="left", padx=5)
+tk.Radiobutton(radio_frame, text="Yes", variable=radio_var, value="Y", command=update_fields).pack(side="left", padx=10)
+tk.Radiobutton(radio_frame, text="No", variable=radio_var, value="N", command=update_fields).pack(side="left", padx=10)
+
+# Frame to hold dynamic fields
+dynamic_frame = tk.Frame(scrollable_frame)
+button_frame = tk.Frame(dynamic_frame)
+dynamic_frame.pack(pady=5, fill="x", anchor="w")
+
+
+tk.Button(button_frame, text="Add File input", command=add_fields).pack()
+tk.Button(button_frame, text="Remove Last File input", command=remove_fields).pack()
+
+tk.Button(scrollable_frame, text="Generate Test Case Document", command=run_processing, bg="green", fg="white").pack(pady=20)
+
+update_fields()
 
 app.mainloop()
